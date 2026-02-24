@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 const WEIGHTS_STORAGE_KEY = "home-decision-lab-weights";
-const WEIGHT_EPSILON = 0.01;
 
 const groupedCategories = [
   {
@@ -39,54 +38,89 @@ const groupedCategories = [
 const allCategoryRows = groupedCategories.flatMap((group) => group.rows);
 const categoryLabels = Object.fromEntries(allCategoryRows.map((row) => [row.key, row.label]));
 
+const presets = {
+  balanced: () =>
+    Object.fromEntries(allCategoryRows.map((row) => [row.key, 1])),
+  budgetFirst: () => ({
+    priceFit: 5,
+    resalePotential: 4,
+    condition: 2,
+    layout: 2,
+    location: 1.5,
+    schools: 1,
+    commute: 1,
+    emotionalPull: 1,
+  }),
+  lifestyleFirst: () => ({
+    priceFit: 1,
+    resalePotential: 1,
+    condition: 1.5,
+    layout: 1.5,
+    location: 4,
+    schools: 3,
+    commute: 3,
+    emotionalPull: 4,
+  }),
+  resaleFocused: () => ({
+    priceFit: 2,
+    resalePotential: 5,
+    condition: 4,
+    layout: 1.5,
+    location: 1.5,
+    schools: 1,
+    commute: 1,
+    emotionalPull: 1,
+  }),
+  familyMode: () => ({
+    priceFit: 1.5,
+    resalePotential: 2,
+    condition: 2,
+    layout: 2,
+    location: 3,
+    schools: 5,
+    commute: 4,
+    emotionalPull: 1.5,
+  }),
+};
+
 function roundTo(value, decimals = 2) {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
 }
 
-function getEqualWeights() {
-  const keys = allCategoryRows.map((row) => row.key);
-  const baseWeight = roundTo(100 / keys.length);
-  const weights = {};
-  keys.forEach((key) => {
-    weights[key] = baseWeight;
-  });
-  const runningTotal = keys.reduce((sum, key) => sum + weights[key], 0);
-  const delta = roundTo(100 - runningTotal);
-  weights[keys[keys.length - 1]] = roundTo(weights[keys[keys.length - 1]] + delta);
-  return weights;
+function getEqualRawWeights() {
+  return Object.fromEntries(allCategoryRows.map((row) => [row.key, 1]));
 }
 
-function normalizeWeights(rawWeights) {
-  if (!rawWeights || typeof rawWeights !== "object") {
-    return getEqualWeights();
-  }
-
-  const keys = allCategoryRows.map((row) => row.key);
-  const hasMissing = keys.some((key) => rawWeights[key] === undefined);
-  if (hasMissing) {
-    return getEqualWeights();
-  }
-
-  const parsed = {};
-  keys.forEach((key) => {
-    const parsedValue = Number(rawWeights[key]);
-    parsed[key] = Number.isFinite(parsedValue) ? Math.max(0, parsedValue) : 0;
+function normalizeRawWeights(rawWeights) {
+  const sanitized = {};
+  allCategoryRows.forEach((row) => {
+    const raw = Number(rawWeights?.[row.key]);
+    sanitized[row.key] = Number.isFinite(raw) && raw > 0 ? raw : 0;
   });
 
-  const total = keys.reduce((sum, key) => sum + parsed[key], 0);
-  if (total <= 0) {
-    return getEqualWeights();
+  const sum = Object.values(sanitized).reduce((acc, value) => acc + value, 0);
+  if (sum === 0) {
+    const equal = 1 / allCategoryRows.length;
+    return Object.fromEntries(allCategoryRows.map((row) => [row.key, equal]));
   }
 
-  const normalized = {};
-  keys.forEach((key) => {
-    normalized[key] = roundTo((parsed[key] / total) * 100);
+  return Object.fromEntries(
+    allCategoryRows.map((row) => [row.key, sanitized[row.key] / sum])
+  );
+}
+
+function hydrateRawWeights(storedWeights) {
+  if (!storedWeights || typeof storedWeights !== "object") {
+    return getEqualRawWeights();
+  }
+
+  const hydrated = {};
+  allCategoryRows.forEach((row) => {
+    const raw = Number(storedWeights[row.key]);
+    hydrated[row.key] = Number.isFinite(raw) && raw >= 0 ? raw : 0;
   });
-  const normalizedTotal = keys.reduce((sum, key) => sum + normalized[key], 0);
-  const delta = roundTo(100 - normalizedTotal);
-  normalized[keys[keys.length - 1]] = roundTo(normalized[keys[keys.length - 1]] + delta);
-  return normalized;
+  return hydrated;
 }
 
 function getScoreTone(score) {
@@ -108,33 +142,14 @@ function getScoreTone(score) {
   };
 }
 
-function ScoreCell({ score, weight }) {
-  const { bar } = getScoreTone(score);
-  const contribution = roundTo((weight / 100) * score);
-
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-3">
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-          <div className={`h-full ${bar}`} style={{ width: `${(score / 10) * 100}%` }} />
-        </div>
-        <span className="w-7 text-right text-xs font-medium text-slate-700">{score}</span>
-      </div>
-      <p className="text-[11px] text-slate-500">
-        {roundTo(weight)}% × {score} = {contribution.toFixed(2)}
-      </p>
-    </div>
-  );
-}
-
-function ColumnHeader({ property, isBest }) {
+function ColumnHeader({ property, isWinner }) {
   const structuralScore = Number(property.structuralScore ?? 0);
   const { badge } = getScoreTone(structuralScore);
 
   return (
     <div
-      className={`rounded-xl border p-3 ${
-        isBest ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-white"
+      className={`rounded-xl border p-3 transition-colors duration-300 ${
+        isWinner ? "border-emerald-200 bg-emerald-50/70" : "border-slate-200 bg-white"
       }`}
     >
       {property.imageBase64 ? (
@@ -171,134 +186,206 @@ function ColumnHeader({ property, isBest }) {
   );
 }
 
-function buildDecisionBullets(properties, winner, runnerUp, weights) {
-  if (!winner || !runnerUp) {
-    return [];
-  }
+function ScoreCell({ score, normalizedWeight }) {
+  const { bar } = getScoreTone(score);
+  const contribution = roundTo(normalizedWeight * score);
+  const percent = roundTo(normalizedWeight * 100);
 
-  const rankedFactors = allCategoryRows
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-3">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+          <div
+            className={`h-full transition-all duration-300 ${bar}`}
+            style={{ width: `${(score / 10) * 100}%` }}
+          />
+        </div>
+        <span className="w-7 text-right text-xs font-medium text-slate-700">{score}</span>
+      </div>
+      <p
+        className="text-[11px] text-slate-500"
+        title={`${percent.toFixed(2)}% × ${score} = ${contribution.toFixed(2)}`}
+      >
+        {contribution.toFixed(2)} pts
+      </p>
+    </div>
+  );
+}
+
+function getTopContributors(winner, runnerUp, normalizedWeights) {
+  if (!winner || !runnerUp) return [];
+
+  return allCategoryRows
     .map((row) => {
       const scoreDiff = winner.scores[row.key] - runnerUp.scores[row.key];
-      const weightedDiff = (weights[row.key] / 100) * scoreDiff;
-      return {
-        key: row.key,
-        scoreDiff,
-        weightedDiff,
-      };
+      const weightedDelta = normalizedWeights[row.key] * scoreDiff;
+      return { key: row.key, scoreDiff, weightedDelta };
     })
-    .sort((a, b) => b.weightedDiff - a.weightedDiff)
-    .filter((factor) => factor.weightedDiff > 0)
+    .sort((a, b) => b.weightedDelta - a.weightedDelta)
+    .filter((item) => item.weightedDelta > 0)
     .slice(0, 3);
-
-  return rankedFactors.map((factor) => {
-    const weight = roundTo(weights[factor.key]);
-    const scoreDiff = roundTo(factor.scoreDiff, 1);
-    const weightedDiff = roundTo(factor.weightedDiff, 2);
-    return `${categoryLabels[factor.key]} (${weight}%): score gap ${scoreDiff > 0 ? "+" : ""}${scoreDiff}, weighted impact +${weightedDiff.toFixed(2)}.`;
-  });
 }
 
 export default function ComparisonTable({ properties, onBack }) {
-  const [weights, setWeights] = useState(() => getEqualWeights());
+  const [rawWeights, setRawWeights] = useState(() => getEqualRawWeights());
+  const [selectedPreset, setSelectedPreset] = useState("balanced");
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem(WEIGHTS_STORAGE_KEY);
       const parsed = stored ? JSON.parse(stored) : null;
-      setWeights(normalizeWeights(parsed));
+      setRawWeights(hydrateRawWeights(parsed));
     } catch {
-      setWeights(getEqualWeights());
+      setRawWeights(getEqualRawWeights());
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(WEIGHTS_STORAGE_KEY, JSON.stringify(weights));
-  }, [weights]);
+    localStorage.setItem(WEIGHTS_STORAGE_KEY, JSON.stringify(rawWeights));
+  }, [rawWeights]);
 
-  const weightTotal = useMemo(
-    () => roundTo(allCategoryRows.reduce((sum, row) => sum + (Number(weights[row.key]) || 0), 0)),
-    [weights]
+  const normalizedWeights = useMemo(() => normalizeRawWeights(rawWeights), [rawWeights]);
+
+  const rawWeightTotal = useMemo(
+    () =>
+      roundTo(
+        allCategoryRows.reduce((sum, row) => sum + (Number(rawWeights[row.key]) || 0), 0),
+        2
+      ),
+    [rawWeights]
   );
-  const isWeightTotalValid = Math.abs(weightTotal - 100) < WEIGHT_EPSILON;
+
+  const sliderMax = useMemo(() => {
+    const maxRaw = Math.max(...allCategoryRows.map((row) => Number(rawWeights[row.key]) || 0), 1);
+    return Math.max(10, Math.ceil(maxRaw * 1.25));
+  }, [rawWeights]);
 
   const weightedTotals = useMemo(() => {
-    const totals = {};
-    properties.forEach((property) => {
-      totals[property.id] = allCategoryRows.reduce((sum, row) => {
-        const weight = Number(weights[row.key]) || 0;
-        return sum + (weight / 100) * property.scores[row.key];
-      }, 0);
-    });
-    return totals;
-  }, [properties, weights]);
+    return Object.fromEntries(
+      properties.map((property) => [
+        property.id,
+        allCategoryRows.reduce(
+          (sum, row) => sum + normalizedWeights[row.key] * property.scores[row.key],
+          0
+        ),
+      ])
+    );
+  }, [properties, normalizedWeights]);
 
-  const sortedByWeighted = useMemo(() => {
-    if (!isWeightTotalValid) return [];
-    return [...properties].sort((a, b) => weightedTotals[b.id] - weightedTotals[a.id]);
-  }, [isWeightTotalValid, properties, weightedTotals]);
+  const sortedByWeighted = useMemo(
+    () => [...properties].sort((a, b) => weightedTotals[b.id] - weightedTotals[a.id]),
+    [properties, weightedTotals]
+  );
 
-  const weightedWinner = sortedByWeighted[0] || null;
+  const winner = sortedByWeighted[0] || null;
   const runnerUp = sortedByWeighted[1] || null;
-  const winnerDelta = weightedWinner && runnerUp ? roundTo(weightedTotals[weightedWinner.id] - weightedTotals[runnerUp.id]) : 0;
+  const winnerMargin =
+    winner && runnerUp ? roundTo(weightedTotals[winner.id] - weightedTotals[runnerUp.id], 2) : 0;
 
-  const highestStructural = properties.reduce((best, current) =>
-    current.structuralScore > best.structuralScore ? current : best
+  const topContributors = useMemo(
+    () => getTopContributors(winner, runnerUp, normalizedWeights),
+    [winner, runnerUp, normalizedWeights]
   );
 
-  const summaryBullets = useMemo(
-    () => buildDecisionBullets(properties, weightedWinner, runnerUp, weights),
-    [properties, weightedWinner, runnerUp, weights]
-  );
+  const highestWeightFactor = useMemo(() => {
+    return allCategoryRows.reduce((best, row) => {
+      if (!best) return row;
+      return normalizedWeights[row.key] > normalizedWeights[best.key] ? row : best;
+    }, null);
+  }, [normalizedWeights]);
+
+  const flipInsight = useMemo(() => {
+    if (!winner || !runnerUp || !highestWeightFactor) return null;
+
+    const key = highestWeightFactor.key;
+    const weight = normalizedWeights[key];
+    const currentScore = runnerUp.scores[key];
+
+    if (weight === 0) return null;
+
+    const minimumIncrease = roundTo(winnerMargin / weight + 0.01, 2);
+    const reachableIncrease = roundTo(10 - currentScore, 2);
+    const requiredScore = roundTo(currentScore + minimumIncrease, 2);
+
+    return {
+      key,
+      weightPercent: roundTo(weight * 100, 2),
+      minimumIncrease,
+      reachableIncrease,
+      requiredScore,
+      possible: requiredScore <= 10,
+      runnerUpName: runnerUp.address,
+    };
+  }, [winner, runnerUp, highestWeightFactor, normalizedWeights, winnerMargin]);
 
   const handleWeightChange = (key, value) => {
-    const parsedValue = Number(value);
-    const safeValue = Number.isFinite(parsedValue) ? Math.min(100, Math.max(0, parsedValue)) : 0;
-    setWeights((prev) => ({
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+    setSelectedPreset("");
+    setRawWeights((prev) => ({
       ...prev,
       [key]: safeValue,
     }));
   };
 
+  const handlePresetChange = (presetKey) => {
+    setSelectedPreset(presetKey);
+    const preset = presets[presetKey];
+    if (!preset) return;
+    setRawWeights(preset());
+  };
+
   return (
     <section className="space-y-5">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold text-slate-900">Decision Lab</h2>
-            <p className="mt-1 text-sm text-slate-500">Weight Total: {weightTotal.toFixed(2)}%</p>
+            <p className="mt-1 text-sm text-slate-500">Smart Weights: Auto-normalized to 100%</p>
+            <p className="mt-0.5 text-xs text-slate-400">Current total input: {rawWeightTotal.toFixed(2)}</p>
           </div>
-
-          <button
-            onClick={onBack}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-          >
-            Back to Dashboard
-          </button>
+          <div className="flex items-end gap-2">
+            <label className="text-sm text-slate-600">
+              Weight Presets
+              <select
+                value={selectedPreset}
+                onChange={(event) => handlePresetChange(event.target.value)}
+                className="mt-1 block rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-slate-500"
+              >
+                <option value="balanced">Balanced</option>
+                <option value="budgetFirst">Budget First</option>
+                <option value="lifestyleFirst">Lifestyle First</option>
+                <option value="resaleFocused">Resale Focused</option>
+                <option value="familyMode">Family Mode</option>
+              </select>
+            </label>
+            <button
+              onClick={onBack}
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Back to Dashboard
+            </button>
+          </div>
         </div>
 
-        {!isWeightTotalValid && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            Weights must total exactly 100% to compute weighted totals and winner.
-          </div>
-        )}
-
-        {isWeightTotalValid && weightedWinner && (
-          <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            Winner: <span className="font-semibold">{weightedWinner.address}</span>
-            {runnerUp && <span> by +{winnerDelta.toFixed(2)}</span>}
+        {winner && (
+          <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+            <p className="text-sm font-semibold text-emerald-900">Winner: {winner.address}</p>
+            <p className="text-sm text-emerald-800">Margin: +{winnerMargin.toFixed(2)} weighted points</p>
+            <p className="text-xs text-emerald-700">Based on your assigned priorities.</p>
           </div>
         )}
 
         <div className="overflow-x-auto">
-          <table className="min-w-[980px] border-collapse text-sm">
+          <table className="min-w-[1050px] border-collapse text-sm">
             <thead>
               <tr>
-                <th className="w-64 border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                <th className="w-72 border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
                   Category / Weight
                 </th>
                 {properties.map((property) => (
                   <th key={property.id} className="border-b border-slate-200 px-3 py-2 text-left align-top">
-                    <ColumnHeader property={property} isBest={property.id === highestStructural.id} />
+                    <ColumnHeader property={property} isWinner={winner?.id === property.id} />
                   </th>
                 ))}
               </tr>
@@ -313,59 +400,55 @@ export default function ComparisonTable({ properties, onBack }) {
                     {properties.map((property) => (
                       <td
                         key={`${property.id}-${group.title}`}
-                        className={`px-3 py-2 ${property.id === highestStructural.id ? "bg-emerald-50/40" : group.tone}`}
+                        className={`px-3 py-2 ${winner?.id === property.id ? "bg-emerald-50/40" : group.tone}`}
                       />
                     ))}
                   </tr>
 
-                  {group.rows.map((row) => (
-                    <tr key={row.key}>
-                      <td className="border-b border-slate-100 px-3 py-3 text-slate-700">
-                        <div className="flex items-center justify-between gap-3">
-                          <span>{row.label}</span>
-                          <label className="flex items-center gap-1 text-xs text-slate-500">
-                            <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="0.01"
-                              value={weights[row.key] ?? 0}
-                              onChange={(event) => handleWeightChange(row.key, event.target.value)}
-                              className="w-20 rounded-md border border-slate-300 px-2 py-1 text-right text-xs text-slate-700 outline-none focus:border-slate-500"
-                            />
-                            %
-                          </label>
-                        </div>
-                      </td>
-
-                      {properties.map((property) => (
-                        <td
-                          key={`${property.id}-${row.key}`}
-                          className={`border-b border-slate-100 px-3 py-3 ${
-                            property.id === highestStructural.id ? "bg-emerald-50/30" : ""
-                          }`}
-                        >
-                          <ScoreCell score={property.scores[row.key]} weight={weights[row.key] ?? 0} />
+                  {group.rows.map((row) => {
+                    const isDisabled = (Number(rawWeights[row.key]) || 0) === 0;
+                    return (
+                      <tr key={row.key} className={`transition-colors duration-300 ${isDisabled ? "opacity-45" : ""}`}>
+                        <td className="border-b border-slate-100 px-3 py-3 text-slate-700">
+                          <div className="space-y-2">
+                            <span>{row.label}</span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={rawWeights[row.key] ?? 0}
+                                onChange={(event) => handleWeightChange(row.key, event.target.value)}
+                                className="w-20 rounded-md border border-slate-300 px-2 py-1 text-right text-xs text-slate-700 outline-none transition-all duration-300 focus:border-slate-500"
+                              />
+                              <input
+                                type="range"
+                                min="0"
+                                max={sliderMax}
+                                step="0.1"
+                                value={Math.min(Number(rawWeights[row.key]) || 0, sliderMax)}
+                                onChange={(event) => handleWeightChange(row.key, event.target.value)}
+                                className="h-1.5 w-full accent-slate-600 transition-all duration-300"
+                              />
+                            </div>
+                          </div>
                         </td>
-                      ))}
-                    </tr>
-                  ))}
+
+                        {properties.map((property) => (
+                          <td
+                            key={`${property.id}-${row.key}`}
+                            className={`border-b border-slate-100 px-3 py-3 ${
+                              winner?.id === property.id ? "bg-emerald-50/30" : ""
+                            }`}
+                          >
+                            <ScoreCell score={property.scores[row.key]} normalizedWeight={normalizedWeights[row.key]} />
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
                 </Fragment>
               ))}
-
-              <tr>
-                <td className="px-3 py-3 font-semibold text-slate-900">Structural Score</td>
-                {properties.map((property) => (
-                  <td
-                    key={`${property.id}-structural`}
-                    className={`px-3 py-3 font-semibold ${
-                      property.id === highestStructural.id ? "bg-emerald-50/40 text-emerald-900" : "text-slate-800"
-                    }`}
-                  >
-                    {property.structuralScore.toFixed(1)}
-                  </td>
-                ))}
-              </tr>
 
               <tr>
                 <td className="px-3 py-3 font-semibold text-slate-900">Weighted Total (WADM)</td>
@@ -373,12 +456,10 @@ export default function ComparisonTable({ properties, onBack }) {
                   <td
                     key={`${property.id}-weighted`}
                     className={`px-3 py-3 font-semibold ${
-                      isWeightTotalValid && weightedWinner?.id === property.id
-                        ? "bg-emerald-50/50 text-emerald-900"
-                        : "text-slate-800"
+                      winner?.id === property.id ? "bg-emerald-50/60 text-emerald-900" : "text-slate-800"
                     }`}
                   >
-                    {isWeightTotalValid ? weightedTotals[property.id].toFixed(2) : "—"}
+                    {weightedTotals[property.id].toFixed(2)}
                   </td>
                 ))}
               </tr>
@@ -388,34 +469,54 @@ export default function ComparisonTable({ properties, onBack }) {
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-lg font-semibold text-slate-900">Decision Summary</h3>
+        <h3 className="text-lg font-semibold text-slate-900">Decision Insight</h3>
 
-        {!isWeightTotalValid && (
-          <p className="mt-3 text-sm text-slate-600">
-            Set weights to exactly 100% to generate the weighted factor summary.
-          </p>
-        )}
+        {!winner && <p className="mt-3 text-sm text-slate-600">Add properties to generate decision insights.</p>}
 
-        {isWeightTotalValid && weightedWinner && !runnerUp && (
-          <p className="mt-3 text-sm text-slate-600">
-            Add another property to compare factor-level weighted contribution differences.
-          </p>
-        )}
-
-        {isWeightTotalValid && weightedWinner && runnerUp && (
-          <>
-            <p className="mt-3 text-sm text-slate-700">
-              Winner: <span className="font-medium">{weightedWinner.address}</span> against{" "}
-              <span className="font-medium">{runnerUp.address}</span>.
+        {winner && (
+          <div className="mt-3 space-y-2 text-sm text-slate-700">
+            <p>
+              Winner: <span className="font-medium">{winner.address}</span>
             </p>
-            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-700">
-              {summaryBullets.length > 0 ? (
-                summaryBullets.map((bullet) => <li key={bullet}>{bullet}</li>)
-              ) : (
-                <li>No positive weighted factor differences separated the top two properties.</li>
-              )}
-            </ul>
-          </>
+            <p>
+              Margin: <span className="font-medium">+{winnerMargin.toFixed(2)} weighted points</span>
+            </p>
+            <div>
+              <p className="font-medium text-slate-800">Top contributing factors</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5">
+                {topContributors.length > 0 ? (
+                  topContributors.map((factor) => (
+                    <li key={factor.key}>
+                      {categoryLabels[factor.key]} ({(normalizedWeights[factor.key] * 100).toFixed(2)}%):
+                      score gap {factor.scoreDiff > 0 ? "+" : ""}
+                      {factor.scoreDiff.toFixed(1)}, weighted impact +{factor.weightedDelta.toFixed(2)}.
+                    </li>
+                  ))
+                ) : (
+                  <li>No positive weighted factor deltas separated the top properties.</li>
+                )}
+              </ul>
+            </div>
+
+            {flipInsight && (
+              <div className="pt-2">
+                <p className="font-medium text-slate-800">What would need to change for 2nd place to win?</p>
+                {flipInsight.possible ? (
+                  <p className="mt-1 text-slate-600">
+                    In {categoryLabels[flipInsight.key]} ({flipInsight.weightPercent.toFixed(2)}% weight),{" "}
+                    {flipInsight.runnerUpName} needs about +{flipInsight.minimumIncrease.toFixed(2)} points
+                    to move ahead.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-slate-600">
+                    Even raising {flipInsight.runnerUpName} to 10.0 in {categoryLabels[flipInsight.key]} would
+                    not fully close the gap; it can gain +{flipInsight.reachableIncrease.toFixed(2)} at most and
+                    still trails the required +{flipInsight.minimumIncrease.toFixed(2)}.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </section>
