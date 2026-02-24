@@ -63,7 +63,7 @@ export default function PropertyCard({ property, onCompare, onDelete }) {
           <div
             className={`flex h-20 w-20 shrink-0 flex-col items-center justify-center rounded-full border-2 ${getScoreColorClasses(structuralScore)}`}
           >
-            <span className="text-[11px] font-medium uppercase tracking-wide">Structural</span>
+            <span className="text-[10px] font-medium uppercase tracking-wide">Structural Score</span>
             <span className="text-2xl font-bold leading-none">{structuralScore.toFixed(1)}</span>
           </div>
         </div>

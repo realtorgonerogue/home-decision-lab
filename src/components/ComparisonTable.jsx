@@ -2,7 +2,7 @@ import { Fragment } from "react";
 
 const groupedCategories = [
   {
-    title: "💰 Financial",
+    title: "Financial",
     tone: "bg-slate-50",
     rows: [
       { key: "priceFit", label: "Price Fit" },
@@ -10,7 +10,7 @@ const groupedCategories = [
     ],
   },
   {
-    title: "🏠 Home Quality",
+    title: "Home Quality",
     tone: "bg-slate-50",
     rows: [
       { key: "condition", label: "Condition" },
@@ -18,7 +18,7 @@ const groupedCategories = [
     ],
   },
   {
-    title: "📍 Lifestyle",
+    title: "Lifestyle",
     tone: "bg-slate-50",
     rows: [
       { key: "location", label: "Location" },
@@ -27,7 +27,7 @@ const groupedCategories = [
     ],
   },
   {
-    title: "❤️ Emotional",
+    title: "Emotional",
     tone: "bg-slate-50",
     rows: [{ key: "emotionalPull", label: "Emotional Pull" }],
   },
@@ -151,7 +151,7 @@ function ColumnHeader({ property, isBest }) {
         className={`mt-3 flex h-20 w-20 items-center justify-center rounded-full border-2 ${badge}`}
       >
         <div className="text-center">
-          <p className="text-[10px] uppercase tracking-wide">Structural</p>
+          <p className="text-[10px] uppercase tracking-wide">Structural Score</p>
           <p className="text-2xl font-bold leading-none">{structuralScore.toFixed(1)}</p>
         </div>
       </div>
